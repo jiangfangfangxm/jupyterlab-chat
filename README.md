@@ -67,15 +67,17 @@ npm install
    - `TASK_TIMEOUT_MS` 用于限制单封邮件任务执行时间
    - `ALLOWED_FROM_DOMAINS` 可选，用逗号分隔多个允许发件域名
 
-3. 配置 OpenClaw 接口（当前默认通过本机 HTTP 服务调用）：
+3. 配置 OpenClaw Gateway 接口（根据 `openclaw status`，默认本机网关地址是 `http://127.0.0.1:18789`）：
 
-   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:3000`
-   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/chat`
-   - `OPENCLAW_AGENT`：默认 `default`
-   - `OPENCLAW_API_KEY`：如接口需要鉴权则填写
+   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`
+   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`
+   - `OPENCLAW_AGENT`：默认 `main`
+   - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 `gateway.auth.token`（也可继续使用 `OPENCLAW_API_KEY`）
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
 
-4. `src/services/openclawClient.js` 已实现基于 OpenClaw `/chat` 接口的默认接入；如果你的本地服务协议不同，请按实际接口调整。
+4. 确认 OpenClaw Gateway 已启用 HTTP Chat Completions 端点；OpenClaw 官方文档说明该端点默认路径为 `/v1/chat/completions`，但默认可能是关闭的，需要在网关配置中启用。
+
+5. `src/services/openclawClient.js` 现在默认按 OpenClaw Gateway 的 OpenAI 兼容 Chat Completions 协议请求；如果你的网关配置了不同端点，再按实际配置调整。
 
 ## 运行
 

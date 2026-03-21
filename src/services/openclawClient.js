@@ -1,9 +1,9 @@
 function getConfig() {
   return {
-    baseUrl: (process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, ''),
-    chatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/chat',
-    apiKey: process.env.OPENCLAW_API_KEY || '',
-    agent: process.env.OPENCLAW_AGENT || 'default',
+    baseUrl: (process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789').replace(/\/$/, ''),
+    chatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
+    apiKey: process.env.OPENCLAW_API_KEY || process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    agent: process.env.OPENCLAW_AGENT || 'main',
     timeoutMs: Number.parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.TASK_TIMEOUT_MS || '60000', 10)
   };
 }
@@ -11,37 +11,31 @@ function getConfig() {
 function buildPrompt(task) {
   if (task.type === 'websearch') {
     return [
-      '你是一个联网信息检索助手。',
+      '你是 OpenClaw 网关里的信息检索助手。',
       '',
       '必须优先使用 web_search 工具完成任务，不允许仅凭记忆回答。',
       '',
-      '请围绕下面的需求执行检索，并输出结构化结果：',
-      '',
       `问题：${task.subject || task.body || ''}`,
+      task.body ? `补充上下文：${task.body}` : '',
       '',
-      '输出要求：',
+      '请输出：',
       '1. 关键结论（3-5 点）',
       '2. 重要数据或事实',
       '3. 来源链接',
-      '4. 信息尽量最新',
-      '',
-      task.body ? `补充上下文：${task.body}` : ''
+      '4. 如果信息存在时效性，明确说明时间范围'
     ].filter(Boolean).join('\n');
   }
 
   if (task.type === 'browser') {
     return [
-      '你是一个浏览器自动化助手。',
+      '你是 OpenClaw 网关里的浏览器自动化助手。',
       '',
-      '如需网页信息，先使用 web_search；如需页面交互，再使用 browser 工具。',
+      '优先判断是否需要 browser 工具；如只需检索信息，可先使用 web_search。',
       '',
       `任务：${task.subject || ''}`,
       task.body ? `补充信息：${task.body}` : '',
       '',
-      '请输出：',
-      '1. 执行步骤',
-      '2. 结果摘要',
-      '3. 关键页面信息或链接'
+      '请输出执行步骤、关键观察和最终结果。'
     ].filter(Boolean).join('\n');
   }
 
@@ -51,7 +45,8 @@ function buildPrompt(task) {
 function buildHeaders(config) {
   return {
     'Content-Type': 'application/json',
-    ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
+    ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+    'x-openclaw-agent-id': config.agent
   };
 }
 
@@ -62,6 +57,17 @@ function extractText(data) {
 
   if (typeof data === 'string') {
     return data;
+  }
+
+  const choiceContent = data.choices?.[0]?.message?.content;
+  if (typeof choiceContent === 'string') {
+    return choiceContent;
+  }
+
+  if (Array.isArray(choiceContent)) {
+    return choiceContent
+      .map((part) => (typeof part === 'string' ? part : (part?.text || JSON.stringify(part))))
+      .join('\n');
   }
 
   if (typeof data.answer === 'string') {
@@ -80,11 +86,20 @@ function extractText(data) {
     return data.output;
   }
 
-  if (Array.isArray(data.output)) {
-    return data.output.map((item) => (typeof item === 'string' ? item : JSON.stringify(item))).join('\n');
-  }
-
   return JSON.stringify(data, null, 2);
+}
+
+function buildChatCompletionPayload(task) {
+  return {
+    model: 'openclaw',
+    user: Array.isArray(task.from) && task.from[0]?.address ? task.from[0].address : undefined,
+    messages: [
+      {
+        role: 'user',
+        content: buildPrompt(task)
+      }
+    ]
+  };
 }
 
 async function executeTask(task) {
@@ -97,21 +112,13 @@ async function executeTask(task) {
     const response = await fetch(`${config.baseUrl}${config.chatEndpoint}`, {
       method: 'POST',
       headers: buildHeaders(config),
-      body: JSON.stringify({
-        message: buildPrompt(task),
-        agent: config.agent,
-        metadata: {
-          taskType: task.type,
-          from: task.from,
-          subject: task.subject
-        }
-      }),
+      body: JSON.stringify(buildChatCompletionPayload(task)),
       signal: controller.signal
     });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
-      throw new Error(`OpenClaw API error: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ''}`);
+      throw new Error(`OpenClaw Gateway API error: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ''}`);
     }
 
     const data = await response.json();
@@ -119,7 +126,7 @@ async function executeTask(task) {
 
     return {
       ok: true,
-      message: text || 'OpenClaw task executed successfully.',
+      message: text || 'OpenClaw gateway task executed successfully.',
       text,
       result: data,
       task
@@ -137,5 +144,6 @@ async function executeTask(task) {
 module.exports = {
   executeTask,
   buildPrompt,
-  extractText
+  extractText,
+  buildChatCompletionPayload
 };
