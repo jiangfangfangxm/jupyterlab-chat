@@ -67,7 +67,15 @@ npm install
    - `TASK_TIMEOUT_MS` 用于限制单封邮件任务执行时间
    - `ALLOWED_FROM_DOMAINS` 可选，用逗号分隔多个允许发件域名
 
-3. 将 `src/services/openclawClient.js` 中的 `executeTask()` 替换为真实 OpenClaw 接口调用逻辑。
+3. 配置 OpenClaw 接口（当前默认通过本机 HTTP 服务调用）：
+
+   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:3000`
+   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/chat`
+   - `OPENCLAW_AGENT`：默认 `default`
+   - `OPENCLAW_API_KEY`：如接口需要鉴权则填写
+   - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
+
+4. `src/services/openclawClient.js` 已实现基于 OpenClaw `/chat` 接口的默认接入；如果你的本地服务协议不同，请按实际接口调整。
 
 ## 运行
 
