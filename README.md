@@ -70,14 +70,20 @@ npm install
 3. 配置 OpenClaw Gateway 接口（根据 `openclaw status`，默认本机网关地址是 `http://127.0.0.1:18789`）：
 
    - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`
-   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`
+   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用）
+   - `OPENCLAW_TOOL_ENDPOINT`：默认 `/tools/invoke`（`websearch` 默认直接调用内置 `web_search` 工具）
    - `OPENCLAW_AGENT`：默认 `main`
    - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 `gateway.auth.token`（也可继续使用 `OPENCLAW_API_KEY`）
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
 
-4. 确认 OpenClaw Gateway 已启用 HTTP Chat Completions 端点；OpenClaw 官方文档说明该端点默认路径为 `/v1/chat/completions`，但默认可能是关闭的，需要在网关配置中启用。
+4. 当前默认策略是：
 
-5. `src/services/openclawClient.js` 现在默认按 OpenClaw Gateway 的 OpenAI 兼容 Chat Completions 协议请求；如果你的网关配置了不同端点，再按实际配置调整。
+   - `websearch` → 直接调用 Gateway `POST /tools/invoke` 的 `web_search` 工具
+   - `browser` → 调用 Gateway `POST /v1/chat/completions` 让 agent 自主使用 `browser` / `web_search`
+
+5. OpenClaw 官方文档说明 `/tools/invoke` 始终启用，而 `/v1/chat/completions` 默认可能是关闭的，需要在网关配置中启用 `gateway.http.endpoints.chatCompletions.enabled=true`。
+
+6. 如果你的 Gateway 配置了不同端点或策略，请按实际配置调整 `src/services/openclawClient.js`。
 
 ## 运行
 

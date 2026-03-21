@@ -2,6 +2,7 @@ function getConfig() {
   return {
     baseUrl: (process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789').replace(/\/$/, ''),
     chatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
+    toolEndpoint: process.env.OPENCLAW_TOOL_ENDPOINT || '/tools/invoke',
     apiKey: process.env.OPENCLAW_API_KEY || process.env.OPENCLAW_GATEWAY_TOKEN || '',
     agent: process.env.OPENCLAW_AGENT || 'main',
     timeoutMs: Number.parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.TASK_TIMEOUT_MS || '60000', 10)
@@ -70,6 +71,14 @@ function extractText(data) {
       .join('\n');
   }
 
+  if (typeof data.result === 'string') {
+    return data.result;
+  }
+
+  if (Array.isArray(data.result)) {
+    return data.result.map((item) => JSON.stringify(item, null, 2)).join('\n');
+  }
+
   if (typeof data.answer === 'string') {
     return data.answer;
   }
@@ -91,7 +100,7 @@ function extractText(data) {
 
 function buildChatCompletionPayload(task) {
   return {
-    model: 'openclaw',
+    model: `openclaw:${task.agent || 'main'}`,
     user: Array.isArray(task.from) && task.from[0]?.address ? task.from[0].address : undefined,
     messages: [
       {
@@ -102,35 +111,45 @@ function buildChatCompletionPayload(task) {
   };
 }
 
-async function executeTask(task) {
-  const config = getConfig();
+function buildToolInvokePayload(task, config) {
+  return {
+    tool: 'web_search',
+    action: 'json',
+    sessionKey: config.agent,
+    args: {
+      query: task.subject || task.body || '',
+      count: 5
+    }
+  };
+}
+
+async function parseJsonResponse(response) {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+async function requestOpenClaw(config, path, payload, timeout) {
   const controller = new AbortController();
-  const timeout = Number.isFinite(config.timeoutMs) ? config.timeoutMs : 60000;
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const response = await fetch(`${config.baseUrl}${config.chatEndpoint}`, {
+    const response = await fetch(`${config.baseUrl}${path}`, {
       method: 'POST',
       headers: buildHeaders(config),
-      body: JSON.stringify(buildChatCompletionPayload(task)),
+      body: JSON.stringify(payload),
       signal: controller.signal
     });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      throw new Error(`OpenClaw Gateway API error: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ''}`);
-    }
-
-    const data = await response.json();
-    const text = extractText(data);
-
-    return {
-      ok: true,
-      message: text || 'OpenClaw gateway task executed successfully.',
-      text,
-      result: data,
-      task
-    };
+    const data = await parseJsonResponse(response);
+    return { response, data };
   } catch (error) {
     if (error.name === 'AbortError') {
       throw new Error(`OpenClaw request timed out after ${timeout}ms`);
@@ -141,9 +160,71 @@ async function executeTask(task) {
   }
 }
 
+function buildHttpError(response, data, fallbackMessage) {
+  const detail = data?.error?.message || data?.message || data?.raw || response.statusText || fallbackMessage;
+  return new Error(`${fallbackMessage}: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`);
+}
+
+async function executeWebsearch(task, config, timeout) {
+  const { response, data } = await requestOpenClaw(config, config.toolEndpoint, buildToolInvokePayload(task, config), timeout);
+
+  if (!response.ok) {
+    throw buildHttpError(response, data, 'OpenClaw tools/invoke error');
+  }
+
+  if (data && data.ok === false) {
+    throw new Error(`OpenClaw web_search failed: ${data.error?.message || JSON.stringify(data.error || data)}`);
+  }
+
+  return {
+    ok: true,
+    message: extractText(data.result || data) || 'OpenClaw web_search executed successfully.',
+    text: extractText(data.result || data),
+    result: data,
+    task
+  };
+}
+
+async function executeBrowser(task, config, timeout) {
+  const { response, data } = await requestOpenClaw(config, config.chatEndpoint, buildChatCompletionPayload({ ...task, agent: config.agent }), timeout);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('OpenClaw chat completions endpoint is not enabled. Enable gateway.http.endpoints.chatCompletions.enabled=true or configure OPENCLAW_CHAT_ENDPOINT to a working endpoint.');
+    }
+    throw buildHttpError(response, data, 'OpenClaw Gateway API error');
+  }
+
+  const text = extractText(data);
+
+  return {
+    ok: true,
+    message: text || 'OpenClaw browser task executed successfully.',
+    text,
+    result: data,
+    task
+  };
+}
+
+async function executeTask(task) {
+  const config = getConfig();
+  const timeout = Number.isFinite(config.timeoutMs) ? config.timeoutMs : 60000;
+
+  if (task.type === 'websearch') {
+    return executeWebsearch(task, config, timeout);
+  }
+
+  if (task.type === 'browser') {
+    return executeBrowser(task, config, timeout);
+  }
+
+  throw new Error(`Unsupported OpenClaw task type: ${task.type}`);
+}
+
 module.exports = {
   executeTask,
   buildPrompt,
   extractText,
-  buildChatCompletionPayload
+  buildChatCompletionPayload,
+  buildToolInvokePayload
 };
