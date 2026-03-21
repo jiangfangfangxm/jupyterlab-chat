@@ -83,7 +83,9 @@ npm install
 
 5. OpenClaw 官方文档说明 `/tools/invoke` 始终启用，而 `/v1/chat/completions` 默认可能是关闭的，需要在网关配置中启用 `gateway.http.endpoints.chatCompletions.enabled=true`。
 
-6. 如果你的 Gateway 配置了不同端点或策略，请按实际配置调整 `src/services/openclawClient.js`。
+6. `websearch` 依赖 OpenClaw 内置 `web_search` 工具。如果邮件回执里出现 `tool execution failed`，通常说明 OpenClaw 的联网搜索提供商或 API key 尚未配置完成；请先在 OpenClaw 中完成 web search 配置（例如通过设置页或 `openclaw configure --section web`），再重试。
+
+7. 如果你的 Gateway 配置了不同端点或策略，请按实际配置调整 `src/services/openclawClient.js`。
 
 ## 运行
 

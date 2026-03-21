@@ -117,8 +117,7 @@ function buildToolInvokePayload(task, config) {
     action: 'json',
     sessionKey: config.agent,
     args: {
-      query: task.subject || task.body || '',
-      count: 5
+      query: task.subject || task.body || ''
     }
   };
 }
@@ -169,7 +168,11 @@ async function executeWebsearch(task, config, timeout) {
   const { response, data } = await requestOpenClaw(config, config.toolEndpoint, buildToolInvokePayload(task, config), timeout);
 
   if (!response.ok) {
-    throw buildHttpError(response, data, 'OpenClaw tools/invoke error');
+    const error = buildHttpError(response, data, 'OpenClaw tools/invoke error');
+    if (response.status >= 500 && String(error.message).includes('tool execution failed')) {
+      throw new Error('OpenClaw web_search tool execution failed. Please verify the Gateway web search provider/API key is configured correctly (for example via OpenClaw web search settings or `openclaw configure --section web`).');
+    }
+    throw error;
   }
 
   if (data && data.ok === false) {
