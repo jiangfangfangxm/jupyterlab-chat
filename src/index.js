@@ -70,7 +70,18 @@ async function processMessage({ type, folder, mail, folderManager, smtpClient, d
 }
 
 async function processFolder({ type, folder, imapClient, folderManager, smtpClient, dedupeStore }) {
-  const messages = await imapClient.listUnread(folder);
+  let messages;
+
+  try {
+    messages = await imapClient.listUnread(folder);
+  } catch (error) {
+    if (error && (error.mailboxMissing || error.responseStatus === 'NO')) {
+      logger.warn({ folder, type, err: error }, 'Mailbox is missing or cannot be selected, skipping folder');
+      return;
+    }
+    throw error;
+  }
+
   logger.info({ folder, type, count: messages.length }, 'Fetched unread messages');
 
   for (const mail of messages) {

@@ -120,7 +120,7 @@ class ImapClient {
   async listUnread(folder) {
     const lock = await this.client.getMailboxLock(folder);
     try {
-      const uids = await this.client.search({ seen: false });
+      const uids = await this.client.search({ seen: false }, { uid: true });
       const messages = [];
       for (const uid of uids) {
         const raw = await this.fetchMessageMetadata(uid);
