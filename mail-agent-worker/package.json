@@ -1,0 +1,26 @@
+{
+  "name": "openclaw-mail-agent-worker",
+  "version": "1.0.0",
+  "description": "Mail-driven task execution worker for OpenClaw using IMAP, SMTP, and Playwright.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js --loop",
+    "once": "node src/index.js --once",
+    "loop": "node src/index.js --loop",
+    "lint": "node --check src/index.js && node --check src/config.js && node --check src/mail/imapClient.js && node --check src/mail/smtpClient.js && node --check src/mail/parser.js && node --check src/processor/taskProcessor.js && node --check src/executors/baseExecutor.js && node --check src/executors/websearchExecutor.js && node --check src/executors/browserExecutor.js && node --check src/state/store.js && node --check src/utils/logger.js && node --check src/utils/timer.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "html-to-text": "^9.0.5",
+    "imapflow": "^1.0.181",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^6.10.1",
+    "pino": "^9.6.0",
+    "pino-roll": "^3.1.0",
+    "playwright": "^1.52.0"
+  }
+}
