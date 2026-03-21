@@ -1,6 +1,14 @@
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 
+async function streamToBuffer(stream) {
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return chunks.length ? Buffer.concat(chunks) : null;
+}
+
 class ImapClient {
   constructor(config, logger) {
     this.config = config;
@@ -14,6 +22,10 @@ class ImapClient {
   }
 
   async close() {
+    if (!this.client.usable) {
+      return;
+    }
+
     await this.client.logout();
     this.logger.info('IMAP disconnected');
   }
@@ -24,6 +36,42 @@ class ImapClient {
     } catch (error) {
       this.logger.debug({ mailbox: path, err: error }, 'Mailbox create skipped');
     }
+  }
+
+  async fetchSourceBuffer(uid, rawMessage) {
+    if (rawMessage?.source) {
+      return Buffer.isBuffer(rawMessage.source) ? rawMessage.source : Buffer.from(rawMessage.source);
+    }
+
+    this.logger.warn({ uid }, 'FETCH response did not include source buffer, falling back to download()');
+
+    try {
+      const { content } = await this.client.download(uid, undefined, { uid: true });
+      return await streamToBuffer(content);
+    } catch (error) {
+      this.logger.warn({ uid, err: error }, 'Fallback download() failed while loading message source');
+      return null;
+    }
+  }
+
+  buildMessage(raw, parsed, sourceBuffer) {
+    const envelope = raw?.envelope || {};
+
+    return {
+      uid: raw.uid,
+      messageId: parsed?.messageId || envelope.messageId || `uid:${raw.uid}`,
+      subject: parsed?.subject || envelope.subject || '',
+      from: parsed?.from?.value || envelope.from || [],
+      to: parsed?.to?.value || envelope.to || [],
+      date: parsed?.date || envelope.date || raw.internalDate || null,
+      text: parsed?.text || '',
+      html: parsed?.html || '',
+      flags: raw.flags,
+      inReplyTo: parsed?.inReplyTo || envelope.inReplyTo,
+      references: parsed?.references,
+      source: sourceBuffer,
+      raw: parsed || null
+    };
   }
 
   async listUnread(folder) {
@@ -40,21 +88,16 @@ class ImapClient {
           internalDate: true
         }, { uid: true });
 
-        const parsed = await simpleParser(raw.source);
-        messages.push({
-          uid: raw.uid,
-          messageId: parsed.messageId || raw.envelope?.messageId || `uid:${raw.uid}`,
-          subject: parsed.subject || raw.envelope?.subject || '',
-          from: parsed.from?.value || [],
-          to: parsed.to?.value || [],
-          date: parsed.date || raw.internalDate,
-          text: parsed.text || '',
-          html: parsed.html || '',
-          flags: raw.flags,
-          inReplyTo: parsed.inReplyTo,
-          references: parsed.references,
-          raw: parsed
-        });
+        const sourceBuffer = await this.fetchSourceBuffer(uid, raw);
+        let parsed = null;
+
+        if (sourceBuffer) {
+          parsed = await simpleParser(sourceBuffer);
+        } else {
+          this.logger.warn({ uid, folder }, 'Unable to load raw message source, using envelope-only fallback');
+        }
+
+        messages.push(this.buildMessage(raw, parsed, sourceBuffer));
       }
       return messages;
     } finally {
