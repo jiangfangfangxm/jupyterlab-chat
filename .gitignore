@@ -1,0 +1,4 @@
+node_modules/
+.env
+data/processed-emails.json
+npm-debug.log*
