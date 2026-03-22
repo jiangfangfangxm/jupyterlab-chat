@@ -75,6 +75,9 @@ npm install
    - `OPENCLAW_TOOL_FALLBACK_ENDPOINT`：默认 `/tools/invoke`；当你把 `OPENCLAW_TOOL_ENDPOINT` 配成旧式 `/api/v1/tool/call` 时，程序会在失败后自动回退到该端点
    - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用；如果你的 OpenClaw 不提供该端点，需要另行调整）
    - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 Gateway Token；也兼容 `OPENCLAW_API_TOKEN` / `OPENCLAW_API_KEY`
+   - `OPENCLAW_EXECUTION_MODE`：默认 `http`；如果 Agent 与 OpenClaw 部署在同一台机器，可切到 `cli`
+   - `OPENCLAW_WEBSEARCH_CLI_COMMAND` / `OPENCLAW_BROWSER_CLI_COMMAND`：仅在 `cli` 模式下生效，程序会把 JSON payload 通过标准输入传给你配置的本地命令
+   - `OPENCLAW_CLI_SHELL`：CLI 模式下执行命令的 shell，默认 `/bin/bash`
    - `OPENCLAW_AGENT`：默认 `main`
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
    - `OPENCLAW_WEBSEARCH_COUNT`：默认 5，范围 1-10
@@ -88,11 +91,26 @@ npm install
    - `browser` → `POST /v1/chat/completions`（如果你的 OpenClaw 文档提供了更合适的 browser API，可继续替换）
    - 如果你仍需兼容旧代理层的 `/api/v1/tool/call`，可以把 `OPENCLAW_TOOL_ENDPOINT=/api/v1/tool/call`；程序会先按旧格式 `{ tool, parameters }` 调用，并在失败时自动回退到官方 `/tools/invoke`
 
-5. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
+5. 如果你希望和 OpenClaw 跑在同一台服务器上，也可以改成 CLI 模式：
 
-6. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明目标地址不是可用的 Gateway HTTP 端口，或者被误配成了 `ws://...` WebSocket 地址；请优先检查 `OPENCLAW_BASE_URL=http://127.0.0.1:18789`，并确认 `/v1/chat/completions` 与 `/tools/invoke` 都是打到同一个 Gateway HTTP 端口。
+   ```dotenv
+   OPENCLAW_EXECUTION_MODE=cli
+   OPENCLAW_WEBSEARCH_CLI_COMMAND=/usr/local/bin/openclaw-websearch-wrapper
+   OPENCLAW_BROWSER_CLI_COMMAND=/usr/local/bin/openclaw-browser-wrapper
+   ```
 
-7. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
+   在该模式下，程序会把 JSON payload 写入命令标准输入：
+
+   - `websearch` 默认传入 `{ tool: "web_search", args: {...}, sessionKey }`
+   - `browser` 默认传入 `{ agent, task, prompt }`
+
+   OpenClaw 官方 CLI 文档目前明确提供了通用的 `openclaw gateway call <method> --params <json>` 调试入口；但不同版本/插件的具体方法名可能不同。所以这里更推荐你在服务器上准备两个本地 wrapper 脚本，再把上面的环境变量指向这些脚本。
+
+6. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
+
+7. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明目标地址不是可用的 Gateway HTTP 端口，或者被误配成了 `ws://...` WebSocket 地址；请优先检查 `OPENCLAW_BASE_URL=http://127.0.0.1:18789`，并确认 `/v1/chat/completions` 与 `/tools/invoke` 都是打到同一个 Gateway HTTP 端口。
+
+8. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
 
 ## 运行
 

@@ -1,3 +1,5 @@
+const { spawn } = require('child_process');
+
 function normalizeHttpBaseUrl(value, fallback) {
   const raw = (value || fallback).trim();
   if (raw.startsWith('ws://')) {
@@ -16,10 +18,16 @@ function getConfig() {
     apiToken: process.env.OPENCLAW_API_TOKEN || process.env.OPENCLAW_API_KEY || '',
     gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN || '',
     agent: process.env.OPENCLAW_AGENT || 'main',
+    executionMode: (process.env.OPENCLAW_EXECUTION_MODE || 'http').trim().toLowerCase(),
     timeoutMs: Number.parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.TASK_TIMEOUT_MS || '60000', 10),
     browserChatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
     toolEndpointPath: process.env.OPENCLAW_TOOL_ENDPOINT || '/tools/invoke',
     toolFallbackEndpointPath: process.env.OPENCLAW_TOOL_FALLBACK_ENDPOINT || '/tools/invoke',
+    cli: {
+      shell: process.env.OPENCLAW_CLI_SHELL || '/bin/bash',
+      websearchCommand: process.env.OPENCLAW_WEBSEARCH_CLI_COMMAND || '',
+      browserCommand: process.env.OPENCLAW_BROWSER_CLI_COMMAND || ''
+    },
     websearchDefaults: {
       count: Number.parseInt(process.env.OPENCLAW_WEBSEARCH_COUNT || '5', 10),
       country: process.env.OPENCLAW_WEBSEARCH_COUNTRY || 'CN',
@@ -179,6 +187,84 @@ function buildGatewayToolInvokePayload(task, config) {
   };
 }
 
+function parseCliOutput(stdout) {
+  const text = (stdout || '').trim();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+function executeCliCommand(command, payload, timeout, shell) {
+  if (!command) {
+    throw new Error('OpenClaw CLI mode is enabled, but the required CLI command is not configured.');
+  }
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      shell,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      child.kill('SIGTERM');
+      reject(new Error(`OpenClaw CLI command timed out after ${timeout}ms`));
+    }, timeout);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      clearTimeout(timer);
+
+      if (code !== 0) {
+        reject(new Error(`OpenClaw CLI command failed with exit code ${code}${stderr.trim() ? `: ${stderr.trim()}` : ''}`));
+        return;
+      }
+
+      resolve({
+        code,
+        data: parseCliOutput(stdout),
+        rawStdout: stdout.trim(),
+        rawStderr: stderr.trim()
+      });
+    });
+
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
 async function parseJsonResponse(response) {
   const text = await response.text();
   if (!text) {
@@ -227,6 +313,25 @@ function buildHttpError(response, data, fallbackMessage) {
 }
 
 async function executeWebsearch(task, config, timeout) {
+  if (config.executionMode === 'cli') {
+    const payload = buildGatewayToolInvokePayload(task, config);
+    const cliResult = await executeCliCommand(
+      config.cli.websearchCommand,
+      payload,
+      timeout,
+      config.cli.shell
+    );
+    const cliText = extractText(cliResult.data) || cliResult.rawStdout;
+
+    return {
+      ok: true,
+      message: cliText || 'OpenClaw web_search executed successfully via CLI.',
+      text: cliText,
+      result: cliResult.data,
+      task
+    };
+  }
+
   const toolBaseUrl = normalizeHttpBaseUrl(process.env.OPENCLAW_WEBSEARCH_BASE_URL || config.baseUrl, config.baseUrl);
   const attempts = [];
   const requestedPath = config.toolEndpointPath;
@@ -289,6 +394,29 @@ async function executeWebsearch(task, config, timeout) {
 }
 
 async function executeBrowser(task, config, timeout) {
+  if (config.executionMode === 'cli') {
+    const payload = {
+      agent: config.agent,
+      task,
+      prompt: buildPrompt(task)
+    };
+    const cliResult = await executeCliCommand(
+      config.cli.browserCommand,
+      payload,
+      timeout,
+      config.cli.shell
+    );
+    const cliText = extractText(cliResult.data) || cliResult.rawStdout;
+
+    return {
+      ok: true,
+      message: cliText || 'OpenClaw browser task executed successfully via CLI.',
+      text: cliText,
+      result: cliResult.data,
+      task
+    };
+  }
+
   const url = `${config.baseUrl}${config.browserChatEndpoint}`;
   const { response, data } = await requestOpenClaw(config, url, buildChatCompletionPayload(task, config), timeout);
 
