@@ -410,7 +410,7 @@ async function requestOpenClaw(config, url, payload, timeout) {
 
     const causeMessage = error?.cause?.message || '';
     if (error instanceof TypeError && causeMessage.includes('Expected HTTP/')) {
-      throw new Error('OpenClaw Gateway protocol mismatch. Please set OPENCLAW_BASE_URL to the HTTP API base URL (for example http://127.0.0.1:7681), not a raw WebSocket URL.');
+      throw new Error(`OpenClaw endpoint protocol mismatch for ${url}. The target endpoint did not respond with HTTP/1.1. Please make sure OPENCLAW_BASE_URL / OPENCLAW_WEBSEARCH_BASE_URL point to a real HTTP API endpoint, not a WebSocket-only or non-HTTP port.`);
     }
 
     throw error;
@@ -426,43 +426,50 @@ function buildHttpError(response, data, fallbackMessage) {
 
 async function executeWebsearch(task, config, timeout) {
   if (config.websearchDefaults.mode === 'agent') {
-    if (config.executionMode === 'cli') {
-      const command = config.cli.browserCommand || config.cli.websearchCommand;
-      const cliResult = await executeCliCommand(
-        command,
-        executeAgentTaskPayload(task, config),
-        timeout,
-        config.cli.shell
-      );
-      const cliText = extractText(cliResult.data) || cliResult.rawStdout;
+    try {
+      if (config.executionMode === 'cli') {
+        const command = config.cli.browserCommand || config.cli.websearchCommand;
+        const cliResult = await executeCliCommand(
+          command,
+          executeAgentTaskPayload(task, config),
+          timeout,
+          config.cli.shell
+        );
+        const cliText = extractText(cliResult.data) || cliResult.rawStdout;
 
+        return {
+          ok: true,
+          message: cliText || 'OpenClaw agent-driven websearch executed successfully via CLI.',
+          text: cliText,
+          result: cliResult.data,
+          task
+        };
+      }
+
+      const url = `${config.baseUrl}${config.browserChatEndpoint}`;
+      const { response, data } = await requestOpenClaw(config, url, buildChatCompletionPayload(task, config), timeout);
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(`OpenClaw chat completions endpoint is not enabled at ${url}. Agent mode websearch requires a working HTTP chat endpoint. If your deployment only exposes tool APIs or local CLI, switch to OPENCLAW_EXECUTION_MODE=cli, or set OPENCLAW_WEBSEARCH_MODE=web_fetch for URL-only fetching.`);
+        }
+        throw buildHttpError(response, data, 'OpenClaw agent websearch error');
+      }
+
+      const text = extractText(data);
       return {
         ok: true,
-        message: cliText || 'OpenClaw agent-driven websearch executed successfully via CLI.',
-        text: cliText,
-        result: cliResult.data,
+        message: text || 'OpenClaw agent-driven websearch executed successfully.',
+        text,
+        result: data,
         task
       };
-    }
-
-    const url = `${config.baseUrl}${config.browserChatEndpoint}`;
-    const { response, data } = await requestOpenClaw(config, url, buildChatCompletionPayload(task, config), timeout);
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('OpenClaw chat completions endpoint is not enabled. For agent mode websearch, please enable the HTTP chat endpoint or switch OPENCLAW_WEBSEARCH_MODE=web_fetch.');
+    } catch (error) {
+      if (typeof error?.message === 'string' && error.message.includes('protocol mismatch')) {
+        throw new Error(`${error.message} Agent mode websearch currently calls ${config.baseUrl}${config.browserChatEndpoint}. If this port does not expose the OpenClaw HTTP chat API, switch to OPENCLAW_EXECUTION_MODE=cli, or set OPENCLAW_WEBSEARCH_MODE=web_fetch for emails that contain direct URLs.`);
       }
-      throw buildHttpError(response, data, 'OpenClaw agent websearch error');
+      throw error;
     }
-
-    const text = extractText(data);
-    return {
-      ok: true,
-      message: text || 'OpenClaw agent-driven websearch executed successfully.',
-      text,
-      result: data,
-      task
-    };
   }
 
   if (config.executionMode === 'cli') {

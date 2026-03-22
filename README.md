@@ -112,7 +112,10 @@ npm install
 
 7. 只有当你把 `OPENCLAW_WEBSEARCH_MODE=web_fetch` 时，`websearch` 文件夹中的邮件才**必须包含 URL**。程序会优先从邮件主题、正文中提取第一个 `http://` 或 `https://` 链接并抓取该网页内容。
 
-8. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明目标地址不是可用的 Gateway HTTP 端口，或者被误配成了 `ws://...` WebSocket 地址；请优先检查 `OPENCLAW_BASE_URL=http://127.0.0.1:18789`，并确认 `/v1/chat/completions` 与 `/tools/invoke` 都是打到同一个 Gateway HTTP 端口。
+8. 如果 `websearch` 在默认 `agent` 模式下报协议错误，通常说明 `OPENCLAW_BASE_URL + OPENCLAW_CHAT_ENDPOINT` 指向的并不是可用的 HTTP chat API。此时应优先二选一：
+
+   - 改成 `OPENCLAW_EXECUTION_MODE=cli`，让 OpenClaw 在本机自行完成 agent/tool 调用；
+   - 或改成 `OPENCLAW_WEBSEARCH_MODE=web_fetch`，但这种模式只适合邮件里已经带有 URL 的情况。
 
 9. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
 
