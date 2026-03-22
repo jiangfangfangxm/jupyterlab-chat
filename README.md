@@ -78,6 +78,7 @@ npm install
    - `OPENCLAW_EXECUTION_MODE`：默认 `http`；如果 Agent 与 OpenClaw 部署在同一台机器，可切到 `cli`
    - `OPENCLAW_WEBSEARCH_CLI_COMMAND` / `OPENCLAW_BROWSER_CLI_COMMAND`：仅在 `cli` 模式下生效；其中 `OPENCLAW_WEBSEARCH_CLI_COMMAND=web_fetch` 表示使用内置官方命令 `openclaw tool call web_fetch '<json>'`
    - `OPENCLAW_CLI_SHELL`：CLI 模式下执行命令的 shell，默认 `/bin/bash`
+   - `OPENCLAW_AGENT_HTTP_FALLBACK_TO_CLI`：默认 `true`；当 `websearch` 处于默认 `agent` 模式、但 HTTP chat 端点协议不匹配时，自动回退到官方 CLI：`openclaw agent --agent <id> --message "<prompt>"`
    - `OPENCLAW_AGENT`：默认 `main`
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
    - `OPENCLAW_WEBSEARCH_MODE`：默认 `agent`；表示把邮件主题/正文直接交给 OpenClaw，由它自行决定是否调用 `web_fetch`、`browser` 等工具；如需强制抓某个链接，可改成 `web_fetch`
@@ -110,14 +111,16 @@ npm install
 
 6. 更推荐的简单配置是让 `websearch` 走默认 `agent` 模式：这样邮件里可以是问题、说明或链接，OpenClaw 会自己决定调用什么工具。
 
-7. 只有当你把 `OPENCLAW_WEBSEARCH_MODE=web_fetch` 时，`websearch` 文件夹中的邮件才**必须包含 URL**。程序会优先从邮件主题、正文中提取第一个 `http://` 或 `https://` 链接并抓取该网页内容。
+7. 默认情况下，如果 `agent` 模式下的 HTTP chat 端点不可用，程序还会自动尝试本机 CLI 回退：`openclaw agent --agent <agent> --message "<prompt>"`。这对“OpenClaw 与邮件代理部署在同一台机器上，但 HTTP 端口不是 chat API”的情况更友好。
 
-8. 如果 `websearch` 在默认 `agent` 模式下报协议错误，通常说明 `OPENCLAW_BASE_URL + OPENCLAW_CHAT_ENDPOINT` 指向的并不是可用的 HTTP chat API。此时应优先二选一：
+8. 只有当你把 `OPENCLAW_WEBSEARCH_MODE=web_fetch` 时，`websearch` 文件夹中的邮件才**必须包含 URL**。程序会优先从邮件主题、正文中提取第一个 `http://` 或 `https://` 链接并抓取该网页内容。
+
+9. 如果 `websearch` 在默认 `agent` 模式下报协议错误，通常说明 `OPENCLAW_BASE_URL + OPENCLAW_CHAT_ENDPOINT` 指向的并不是可用的 HTTP chat API。此时应优先二选一：
 
    - 改成 `OPENCLAW_EXECUTION_MODE=cli`，让 OpenClaw 在本机自行完成 agent/tool 调用；
    - 或改成 `OPENCLAW_WEBSEARCH_MODE=web_fetch`，但这种模式只适合邮件里已经带有 URL 的情况。
 
-9. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
+10. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
 
 ## 运行
 

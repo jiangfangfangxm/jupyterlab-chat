@@ -26,7 +26,8 @@ function getConfig() {
     cli: {
       shell: process.env.OPENCLAW_CLI_SHELL || '/bin/bash',
       websearchCommand: process.env.OPENCLAW_WEBSEARCH_CLI_COMMAND || '',
-      browserCommand: process.env.OPENCLAW_BROWSER_CLI_COMMAND || ''
+      browserCommand: process.env.OPENCLAW_BROWSER_CLI_COMMAND || '',
+      agentHttpFallbackToCli: !['0', 'false', 'no', 'off'].includes(String(process.env.OPENCLAW_AGENT_HTTP_FALLBACK_TO_CLI || 'true').toLowerCase())
     },
     websearchDefaults: {
       mode: (process.env.OPENCLAW_WEBSEARCH_MODE || 'agent').trim().toLowerCase(),
@@ -367,6 +368,15 @@ function executeCliArgs(file, args, timeout) {
   });
 }
 
+function shouldUseBuiltinAgentCli(command) {
+  const normalized = (command || '').trim().toLowerCase();
+  return !normalized || normalized === 'agent' || normalized === 'openclaw-agent';
+}
+
+function executeBuiltinAgentCli(task, config, timeout) {
+  return executeCliArgs('openclaw', ['agent', '--agent', config.agent, '--message', buildPrompt(task)], timeout);
+}
+
 function shouldUseBuiltinWebsearchCli(command) {
   const normalized = (command || '').trim().toLowerCase();
   return !normalized || normalized === 'web_fetch' || normalized === 'web-fetch';
@@ -429,12 +439,14 @@ async function executeWebsearch(task, config, timeout) {
     try {
       if (config.executionMode === 'cli') {
         const command = config.cli.browserCommand || config.cli.websearchCommand;
-        const cliResult = await executeCliCommand(
-          command,
-          executeAgentTaskPayload(task, config),
-          timeout,
-          config.cli.shell
-        );
+        const cliResult = shouldUseBuiltinAgentCli(command)
+          ? await executeBuiltinAgentCli(task, config, timeout)
+          : await executeCliCommand(
+            command,
+            executeAgentTaskPayload(task, config),
+            timeout,
+            config.cli.shell
+          );
         const cliText = extractText(cliResult.data) || cliResult.rawStdout;
 
         return {
@@ -466,6 +478,17 @@ async function executeWebsearch(task, config, timeout) {
       };
     } catch (error) {
       if (typeof error?.message === 'string' && error.message.includes('protocol mismatch')) {
+        if (config.cli.agentHttpFallbackToCli) {
+          const cliResult = await executeBuiltinAgentCli(task, config, timeout);
+          const cliText = extractText(cliResult.data) || cliResult.rawStdout;
+          return {
+            ok: true,
+            message: cliText || 'OpenClaw agent-driven websearch executed successfully via CLI fallback.',
+            text: cliText,
+            result: cliResult.data,
+            task
+          };
+        }
         throw new Error(`${error.message} Agent mode websearch currently calls ${config.baseUrl}${config.browserChatEndpoint}. If this port does not expose the OpenClaw HTTP chat API, switch to OPENCLAW_EXECUTION_MODE=cli, or set OPENCLAW_WEBSEARCH_MODE=web_fetch for emails that contain direct URLs.`);
       }
       throw error;
