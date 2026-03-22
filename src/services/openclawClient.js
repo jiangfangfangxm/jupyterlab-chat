@@ -13,11 +13,13 @@ function getConfig() {
   const baseUrl = normalizeHttpBaseUrl(process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789', 'http://127.0.0.1:18789');
   return {
     baseUrl,
-    apiKey: process.env.OPENCLAW_API_TOKEN || process.env.OPENCLAW_API_KEY || process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiToken: process.env.OPENCLAW_API_TOKEN || process.env.OPENCLAW_API_KEY || '',
+    gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN || '',
     agent: process.env.OPENCLAW_AGENT || 'main',
     timeoutMs: Number.parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.TASK_TIMEOUT_MS || '60000', 10),
     browserChatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
-    toolEndpointPath: process.env.OPENCLAW_TOOL_ENDPOINT || '/api/v1/tool/call',
+    toolEndpointPath: process.env.OPENCLAW_TOOL_ENDPOINT || '/tools/invoke',
+    toolFallbackEndpointPath: process.env.OPENCLAW_TOOL_FALLBACK_ENDPOINT || '/tools/invoke',
     websearchDefaults: {
       count: Number.parseInt(process.env.OPENCLAW_WEBSEARCH_COUNT || '5', 10),
       country: process.env.OPENCLAW_WEBSEARCH_COUNTRY || 'CN',
@@ -76,9 +78,10 @@ function buildPrompt(task) {
 }
 
 function buildHeaders(config) {
+  const authToken = config.apiToken || config.gatewayToken;
   return {
     'Content-Type': 'application/json',
-    ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     'x-openclaw-agent-id': config.agent
   };
 }
@@ -167,6 +170,15 @@ function buildToolCallPayload(task, config) {
   };
 }
 
+function buildGatewayToolInvokePayload(task, config) {
+  const { tool, parameters } = buildToolCallPayload(task, config);
+  return {
+    tool,
+    args: parameters,
+    sessionKey: config.agent
+  };
+}
+
 async function parseJsonResponse(response) {
   const text = await response.text();
   if (!text) {
@@ -215,8 +227,49 @@ function buildHttpError(response, data, fallbackMessage) {
 }
 
 async function executeWebsearch(task, config, timeout) {
-  const url = `${normalizeHttpBaseUrl(process.env.OPENCLAW_WEBSEARCH_BASE_URL || config.baseUrl, config.baseUrl)}${config.toolEndpointPath}`;
-  const { response, data } = await requestOpenClaw(config, url, buildToolCallPayload(task, config), timeout);
+  const toolBaseUrl = normalizeHttpBaseUrl(process.env.OPENCLAW_WEBSEARCH_BASE_URL || config.baseUrl, config.baseUrl);
+  const attempts = [];
+  const requestedPath = config.toolEndpointPath;
+  const requestedPayload = requestedPath === '/tools/invoke'
+    ? buildGatewayToolInvokePayload(task, config)
+    : buildToolCallPayload(task, config);
+
+  attempts.push({
+    url: `${toolBaseUrl}${requestedPath}`,
+    payload: requestedPayload
+  });
+
+  if (requestedPath !== config.toolFallbackEndpointPath) {
+    attempts.push({
+      url: `${config.baseUrl}${config.toolFallbackEndpointPath}`,
+      payload: buildGatewayToolInvokePayload(task, config)
+    });
+  }
+
+  let response;
+  let data;
+  let lastError;
+
+  for (const attempt of attempts) {
+    try {
+      ({ response, data } = await requestOpenClaw(config, attempt.url, attempt.payload, timeout));
+      if (!response.ok && response.status === 404 && attempt.url !== attempts[attempts.length - 1].url) {
+        lastError = buildHttpError(response, data, 'OpenClaw tool endpoint not found');
+        continue;
+      }
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt.url !== attempts[attempts.length - 1].url) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (!response) {
+    throw lastError || new Error('OpenClaw web_search request failed before receiving a response');
+  }
 
   if (!response.ok) {
     throw buildHttpError(response, data, 'OpenClaw tool/call error');

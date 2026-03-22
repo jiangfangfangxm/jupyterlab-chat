@@ -70,10 +70,11 @@ npm install
 3. 配置 OpenClaw 接口：
 
    - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`
-   - `OPENCLAW_WEBSEARCH_BASE_URL`：可单独覆盖 web_search HTTP API 地址，默认同 `OPENCLAW_BASE_URL`
-   - `OPENCLAW_TOOL_ENDPOINT`：默认 `/api/v1/tool/call`（`websearch` 默认直接调用文档化的 `web_search` HTTP API）
+   - `OPENCLAW_WEBSEARCH_BASE_URL`：可单独覆盖 `websearch` 的 HTTP 地址，默认同 `OPENCLAW_BASE_URL`
+   - `OPENCLAW_TOOL_ENDPOINT`：默认 `/tools/invoke`（OpenClaw Gateway 官方工具调用 HTTP API）
+   - `OPENCLAW_TOOL_FALLBACK_ENDPOINT`：默认 `/tools/invoke`；当你把 `OPENCLAW_TOOL_ENDPOINT` 配成旧式 `/api/v1/tool/call` 时，程序会在失败后自动回退到该端点
    - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用；如果你的 OpenClaw 不提供该端点，需要另行调整）
-   - `OPENCLAW_API_TOKEN`：推荐填写 OpenClaw API Token（也兼容 `OPENCLAW_API_KEY` / `OPENCLAW_GATEWAY_TOKEN`）
+   - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 Gateway Token；也兼容 `OPENCLAW_API_TOKEN` / `OPENCLAW_API_KEY`
    - `OPENCLAW_AGENT`：默认 `main`
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
    - `OPENCLAW_WEBSEARCH_COUNT`：默认 5，范围 1-10
@@ -83,12 +84,13 @@ npm install
 
 4. 当前默认策略是：
 
-   - `websearch` → `POST /api/v1/tool/call`，请求体为 `{ tool: "web_search", parameters: { query, count, country, language, freshness } }`
+   - `websearch` → `POST /tools/invoke`，请求体为 `{ tool: "web_search", args: { query, count, country, language, freshness }, sessionKey }`
    - `browser` → `POST /v1/chat/completions`（如果你的 OpenClaw 文档提供了更合适的 browser API，可继续替换）
+   - 如果你仍需兼容旧代理层的 `/api/v1/tool/call`，可以把 `OPENCLAW_TOOL_ENDPOINT=/api/v1/tool/call`；程序会先按旧格式 `{ tool, parameters }` 调用，并在失败时自动回退到官方 `/tools/invoke`
 
 5. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
 
-6. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明你把 `OPENCLAW_BASE_URL` 配成了 `ws://...` WebSocket 地址；请改回 `http://127.0.0.1:18789` 这样的 HTTP API 地址。
+6. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明目标地址不是可用的 Gateway HTTP 端口，或者被误配成了 `ws://...` WebSocket 地址；请优先检查 `OPENCLAW_BASE_URL=http://127.0.0.1:18789`，并确认 `/v1/chat/completions` 与 `/tools/invoke` 都是打到同一个 Gateway HTTP 端口。
 
 7. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
 
