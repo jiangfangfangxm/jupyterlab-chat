@@ -265,6 +265,75 @@ function executeCliCommand(command, payload, timeout, shell) {
   });
 }
 
+function executeCliArgs(file, args, timeout) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      child.kill('SIGTERM');
+      reject(new Error(`OpenClaw CLI command timed out after ${timeout}ms`));
+    }, timeout);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      clearTimeout(timer);
+
+      if (code !== 0) {
+        reject(new Error(`OpenClaw CLI command failed with exit code ${code}${stderr.trim() ? `: ${stderr.trim()}` : ''}`));
+        return;
+      }
+
+      resolve({
+        code,
+        data: parseCliOutput(stdout),
+        rawStdout: stdout.trim(),
+        rawStderr: stderr.trim()
+      });
+    });
+  });
+}
+
+function shouldUseBuiltinWebsearchCli(command) {
+  const normalized = (command || '').trim().toLowerCase();
+  return !normalized || normalized === 'web_search' || normalized === 'web-search';
+}
+
+function executeBuiltinWebsearchCli(task, config, timeout) {
+  const { parameters } = buildToolCallPayload(task, config);
+  return executeCliArgs('openclaw', ['tool', 'call', 'web_search', JSON.stringify(parameters)], timeout);
+}
+
 async function parseJsonResponse(response) {
   const text = await response.text();
   if (!text) {
@@ -314,13 +383,14 @@ function buildHttpError(response, data, fallbackMessage) {
 
 async function executeWebsearch(task, config, timeout) {
   if (config.executionMode === 'cli') {
-    const payload = buildGatewayToolInvokePayload(task, config);
-    const cliResult = await executeCliCommand(
-      config.cli.websearchCommand,
-      payload,
-      timeout,
-      config.cli.shell
-    );
+    const cliResult = shouldUseBuiltinWebsearchCli(config.cli.websearchCommand)
+      ? await executeBuiltinWebsearchCli(task, config, timeout)
+      : await executeCliCommand(
+        config.cli.websearchCommand,
+        buildGatewayToolInvokePayload(task, config),
+        timeout,
+        config.cli.shell
+      );
     const cliText = extractText(cliResult.data) || cliResult.rawStdout;
 
     return {

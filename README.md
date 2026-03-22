@@ -76,7 +76,7 @@ npm install
    - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用；如果你的 OpenClaw 不提供该端点，需要另行调整）
    - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 Gateway Token；也兼容 `OPENCLAW_API_TOKEN` / `OPENCLAW_API_KEY`
    - `OPENCLAW_EXECUTION_MODE`：默认 `http`；如果 Agent 与 OpenClaw 部署在同一台机器，可切到 `cli`
-   - `OPENCLAW_WEBSEARCH_CLI_COMMAND` / `OPENCLAW_BROWSER_CLI_COMMAND`：仅在 `cli` 模式下生效，程序会把 JSON payload 通过标准输入传给你配置的本地命令
+   - `OPENCLAW_WEBSEARCH_CLI_COMMAND` / `OPENCLAW_BROWSER_CLI_COMMAND`：仅在 `cli` 模式下生效；其中 `OPENCLAW_WEBSEARCH_CLI_COMMAND=web_search` 表示使用内置官方命令 `openclaw tool call web_search '<json>'`
    - `OPENCLAW_CLI_SHELL`：CLI 模式下执行命令的 shell，默认 `/bin/bash`
    - `OPENCLAW_AGENT`：默认 `main`
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
@@ -95,16 +95,17 @@ npm install
 
    ```dotenv
    OPENCLAW_EXECUTION_MODE=cli
-   OPENCLAW_WEBSEARCH_CLI_COMMAND=/usr/local/bin/openclaw-websearch-wrapper
+   OPENCLAW_WEBSEARCH_CLI_COMMAND=web_search
    OPENCLAW_BROWSER_CLI_COMMAND=/usr/local/bin/openclaw-browser-wrapper
    ```
 
-   在该模式下，程序会把 JSON payload 写入命令标准输入：
+   在该模式下：
 
-   - `websearch` 默认传入 `{ tool: "web_search", args: {...}, sessionKey }`
-   - `browser` 默认传入 `{ agent, task, prompt }`
+   - `websearch` 会直接执行官方 CLI：`openclaw tool call web_search '<json>'`
+   - 传入参数类似：`{ "query": "...", "count": 5, "country": "CN", "language": "zh", "freshness": "day" }`
+   - `browser` 仍然走你自行配置的本地命令，程序会把 `{ agent, task, prompt }` 作为 JSON 写入标准输入
 
-   OpenClaw 官方 CLI 文档目前明确提供了通用的 `openclaw gateway call <method> --params <json>` 调试入口；但不同版本/插件的具体方法名可能不同。所以这里更推荐你在服务器上准备两个本地 wrapper 脚本，再把上面的环境变量指向这些脚本。
+   如果你把 `OPENCLAW_WEBSEARCH_CLI_COMMAND` 留空，或者显式写成 `web_search` / `web-search`，程序都会自动回退到上面的官方 `openclaw tool call web_search` 形式，而不会再把 `web_search` 当成 shell 命令直接执行。
 
 6. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
 
