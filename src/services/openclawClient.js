@@ -29,10 +29,8 @@ function getConfig() {
       browserCommand: process.env.OPENCLAW_BROWSER_CLI_COMMAND || ''
     },
     websearchDefaults: {
-      count: Number.parseInt(process.env.OPENCLAW_WEBSEARCH_COUNT || '5', 10),
-      country: process.env.OPENCLAW_WEBSEARCH_COUNTRY || 'CN',
-      language: process.env.OPENCLAW_WEBSEARCH_LANGUAGE || 'zh',
-      freshness: process.env.OPENCLAW_WEBSEARCH_FRESHNESS || ''
+      extractMode: process.env.OPENCLAW_WEBFETCH_EXTRACT_MODE || 'markdown',
+      maxChars: Number.parseInt(process.env.OPENCLAW_WEBFETCH_MAX_CHARS || '12000', 10)
     }
   };
 }
@@ -53,19 +51,20 @@ function stripTaskPrefix(input, prefix) {
 
 function buildPrompt(task) {
   if (task.type === 'websearch') {
+    const url = extractUrlFromTask(task);
     return [
-      '你是 OpenClaw 网关里的信息检索助手。',
+      '你是 OpenClaw 网关里的网页抓取助手。',
       '',
-      '必须优先使用 web_search 工具完成任务，不允许仅凭记忆回答。',
+      '必须优先使用 web_fetch 工具抓取网页内容，不允许仅凭记忆回答。',
       '',
-      `问题：${task.subject || task.body || ''}`,
+      `目标 URL：${url || '未提供 URL'}`,
       task.body ? `补充上下文：${task.body}` : '',
       '',
       '请输出：',
-      '1. 关键结论（3-5 点）',
-      '2. 重要数据或事实',
-      '3. 来源链接',
-      '4. 如果信息存在时效性，明确说明时间范围'
+      '1. 页面主要内容摘要',
+      '2. 关键事实或数据',
+      '3. 原始链接',
+      '4. 如网页内容可能过时，请明确说明'
     ].filter(Boolean).join('\n');
   }
 
@@ -73,7 +72,7 @@ function buildPrompt(task) {
     return [
       '你是 OpenClaw 网关里的浏览器自动化助手。',
       '',
-      '优先判断是否需要 browser 工具；如只需检索信息，可先使用 web_search。',
+      '优先判断是否需要 browser 工具；如只需要抓取某个已知网页，可先使用 web_fetch。',
       '',
       `任务：${task.subject || ''}`,
       task.body ? `补充信息：${task.body}` : '',
@@ -155,25 +154,40 @@ function buildChatCompletionPayload(task, config) {
   };
 }
 
+function extractUrlFromTask(task) {
+  const candidates = [
+    stripTaskPrefix(task.subject || '', 'web'),
+    task.subject || '',
+    task.body || ''
+  ].filter(Boolean);
+
+  for (const item of candidates) {
+    const match = item.match(/https?:\/\/[^\s<>"')]+/i);
+    if (match) {
+      return match[0];
+    }
+  }
+
+  return '';
+}
+
 function buildToolCallPayload(task, config) {
-  const query = stripTaskPrefix(task.subject || task.body || '', 'web') || task.subject || task.body || '';
+  const url = extractUrlFromTask(task);
+  if (!url) {
+    throw new Error('websearch 任务未提供可抓取的 URL。请在邮件主题或正文中包含 http:// 或 https:// 链接，当前已改为使用 OpenClaw 内置 web_fetch 工具。');
+  }
+
   const parameters = {
-    query,
-    count: Math.min(Math.max(config.websearchDefaults.count || 5, 1), 10)
+    url,
+    extractMode: config.websearchDefaults.extractMode || 'markdown'
   };
 
-  if (config.websearchDefaults.country) {
-    parameters.country = config.websearchDefaults.country;
-  }
-  if (config.websearchDefaults.language) {
-    parameters.language = config.websearchDefaults.language;
-  }
-  if (config.websearchDefaults.freshness) {
-    parameters.freshness = config.websearchDefaults.freshness;
+  if (Number.isFinite(config.websearchDefaults.maxChars) && config.websearchDefaults.maxChars > 0) {
+    parameters.maxChars = config.websearchDefaults.maxChars;
   }
 
   return {
-    tool: 'web_search',
+    tool: 'web_fetch',
     parameters
   };
 }
@@ -326,12 +340,12 @@ function executeCliArgs(file, args, timeout) {
 
 function shouldUseBuiltinWebsearchCli(command) {
   const normalized = (command || '').trim().toLowerCase();
-  return !normalized || normalized === 'web_search' || normalized === 'web-search';
+  return !normalized || normalized === 'web_fetch' || normalized === 'web-fetch';
 }
 
 function executeBuiltinWebsearchCli(task, config, timeout) {
   const { parameters } = buildToolCallPayload(task, config);
-  return executeCliArgs('openclaw', ['tool', 'call', 'web_search', JSON.stringify(parameters)], timeout);
+  return executeCliArgs('openclaw', ['tool', 'call', 'web_fetch', JSON.stringify(parameters)], timeout);
 }
 
 async function parseJsonResponse(response) {
@@ -395,7 +409,7 @@ async function executeWebsearch(task, config, timeout) {
 
     return {
       ok: true,
-      message: cliText || 'OpenClaw web_search executed successfully via CLI.',
+      message: cliText || 'OpenClaw web_fetch executed successfully via CLI.',
       text: cliText,
       result: cliResult.data,
       task
@@ -443,7 +457,7 @@ async function executeWebsearch(task, config, timeout) {
   }
 
   if (!response) {
-    throw lastError || new Error('OpenClaw web_search request failed before receiving a response');
+    throw lastError || new Error('OpenClaw web_fetch request failed before receiving a response');
   }
 
   if (!response.ok) {
@@ -451,12 +465,12 @@ async function executeWebsearch(task, config, timeout) {
   }
 
   if (data && data.status && data.status !== 'ok') {
-    throw new Error(`OpenClaw web_search failed: ${JSON.stringify(data)}`);
+    throw new Error(`OpenClaw web_fetch failed: ${JSON.stringify(data)}`);
   }
 
   return {
     ok: true,
-    message: extractText(data.result || data) || 'OpenClaw web_search executed successfully.',
+    message: extractText(data.result || data) || 'OpenClaw web_fetch executed successfully.',
     text: extractText(data.result || data),
     result: data,
     task
@@ -527,6 +541,7 @@ module.exports = {
   extractText,
   buildChatCompletionPayload,
   buildToolCallPayload,
+  extractUrlFromTask,
   normalizeHttpBaseUrl,
   stripTaskPrefix
 };

@@ -76,18 +76,16 @@ npm install
    - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用；如果你的 OpenClaw 不提供该端点，需要另行调整）
    - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 Gateway Token；也兼容 `OPENCLAW_API_TOKEN` / `OPENCLAW_API_KEY`
    - `OPENCLAW_EXECUTION_MODE`：默认 `http`；如果 Agent 与 OpenClaw 部署在同一台机器，可切到 `cli`
-   - `OPENCLAW_WEBSEARCH_CLI_COMMAND` / `OPENCLAW_BROWSER_CLI_COMMAND`：仅在 `cli` 模式下生效；其中 `OPENCLAW_WEBSEARCH_CLI_COMMAND=web_search` 表示使用内置官方命令 `openclaw tool call web_search '<json>'`
+   - `OPENCLAW_WEBSEARCH_CLI_COMMAND` / `OPENCLAW_BROWSER_CLI_COMMAND`：仅在 `cli` 模式下生效；其中 `OPENCLAW_WEBSEARCH_CLI_COMMAND=web_fetch` 表示使用内置官方命令 `openclaw tool call web_fetch '<json>'`
    - `OPENCLAW_CLI_SHELL`：CLI 模式下执行命令的 shell，默认 `/bin/bash`
    - `OPENCLAW_AGENT`：默认 `main`
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
-   - `OPENCLAW_WEBSEARCH_COUNT`：默认 5，范围 1-10
-   - `OPENCLAW_WEBSEARCH_COUNTRY`：默认 `CN`
-   - `OPENCLAW_WEBSEARCH_LANGUAGE`：默认 `zh`
-   - `OPENCLAW_WEBSEARCH_FRESHNESS`：可选，支持 `day/week/month/year`
+   - `OPENCLAW_WEBFETCH_EXTRACT_MODE`：默认 `markdown`
+   - `OPENCLAW_WEBFETCH_MAX_CHARS`：默认 `12000`
 
 4. 当前默认策略是：
 
-   - `websearch` → `POST /tools/invoke`，请求体为 `{ tool: "web_search", args: { query, count, country, language, freshness }, sessionKey }`
+   - `websearch` → `POST /tools/invoke`，请求体为 `{ tool: "web_fetch", args: { url, extractMode, maxChars }, sessionKey }`
    - `browser` → `POST /v1/chat/completions`（如果你的 OpenClaw 文档提供了更合适的 browser API，可继续替换）
    - 如果你仍需兼容旧代理层的 `/api/v1/tool/call`，可以把 `OPENCLAW_TOOL_ENDPOINT=/api/v1/tool/call`；程序会先按旧格式 `{ tool, parameters }` 调用，并在失败时自动回退到官方 `/tools/invoke`
 
@@ -95,19 +93,19 @@ npm install
 
    ```dotenv
    OPENCLAW_EXECUTION_MODE=cli
-   OPENCLAW_WEBSEARCH_CLI_COMMAND=web_search
+   OPENCLAW_WEBSEARCH_CLI_COMMAND=web_fetch
    OPENCLAW_BROWSER_CLI_COMMAND=/usr/local/bin/openclaw-browser-wrapper
    ```
 
    在该模式下：
 
-   - `websearch` 会直接执行官方 CLI：`openclaw tool call web_search '<json>'`
-   - 传入参数类似：`{ "query": "...", "count": 5, "country": "CN", "language": "zh", "freshness": "day" }`
+   - `websearch` 会直接执行官方 CLI：`openclaw tool call web_fetch '<json>'`
+   - 传入参数类似：`{ "url": "https://example.com/news", "extractMode": "markdown", "maxChars": 12000 }`
    - `browser` 仍然走你自行配置的本地命令，程序会把 `{ agent, task, prompt }` 作为 JSON 写入标准输入
 
-   如果你把 `OPENCLAW_WEBSEARCH_CLI_COMMAND` 留空，或者显式写成 `web_search` / `web-search`，程序都会自动回退到上面的官方 `openclaw tool call web_search` 形式，而不会再把 `web_search` 当成 shell 命令直接执行。
+   如果你把 `OPENCLAW_WEBSEARCH_CLI_COMMAND` 留空，或者显式写成 `web_fetch` / `web-fetch`，程序都会自动回退到上面的官方 `openclaw tool call web_fetch` 形式。
 
-6. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
+6. 由于现在使用的是 `web_fetch`，`websearch` 文件夹中的邮件**必须包含 URL**。程序会优先从邮件主题、正文中提取第一个 `http://` 或 `https://` 链接并抓取该网页内容。
 
 7. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明目标地址不是可用的 Gateway HTTP 端口，或者被误配成了 `ws://...` WebSocket 地址；请优先检查 `OPENCLAW_BASE_URL=http://127.0.0.1:18789`，并确认 `/v1/chat/completions` 与 `/tools/invoke` 都是打到同一个 Gateway HTTP 端口。
 
