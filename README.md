@@ -69,7 +69,7 @@ npm install
 
 3. 配置 OpenClaw Gateway 接口（根据 `openclaw status`，默认本机网关地址是 `http://127.0.0.1:18789`）：
 
-   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`
+   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`（如果你从 `openclaw status` 里复制的是 `ws://127.0.0.1:18789`，这里要改成 HTTP 形式）
    - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用）
    - `OPENCLAW_TOOL_ENDPOINT`：默认 `/tools/invoke`（`websearch` 默认直接调用内置 `web_search` 工具）
    - `OPENCLAW_AGENT`：默认 `main`
@@ -85,7 +85,9 @@ npm install
 
 6. `websearch` 依赖 OpenClaw 内置 `web_search` 工具。如果邮件回执里出现 `tool execution failed`，通常说明 OpenClaw 的联网搜索提供商或 API key 尚未配置完成；请先在 OpenClaw 中完成 web search 配置（例如通过设置页或 `openclaw configure --section web`），再重试。
 
-7. 如果你的 Gateway 配置了不同端点或策略，请按实际配置调整 `src/services/openclawClient.js`。
+7. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明你把 `OPENCLAW_BASE_URL` 配成了 `ws://...` WebSocket 地址；请改回 `http://127.0.0.1:18789` 这样的 HTTP 网关地址。
+
+8. 如果你的 Gateway 配置了不同端点或策略，请按实际配置调整 `src/services/openclawClient.js`。
 
 ## 运行
 

@@ -1,6 +1,17 @@
+function normalizeHttpBaseUrl(value) {
+  const raw = (value || 'http://127.0.0.1:18789').trim();
+  if (raw.startsWith('ws://')) {
+    return `http://${raw.slice(5)}`.replace(/\/$/, '');
+  }
+  if (raw.startsWith('wss://')) {
+    return `https://${raw.slice(6)}`.replace(/\/$/, '');
+  }
+  return raw.replace(/\/$/, '');
+}
+
 function getConfig() {
   return {
-    baseUrl: (process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789').replace(/\/$/, ''),
+    baseUrl: normalizeHttpBaseUrl(process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789'),
     chatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
     toolEndpoint: process.env.OPENCLAW_TOOL_ENDPOINT || '/tools/invoke',
     apiKey: process.env.OPENCLAW_API_KEY || process.env.OPENCLAW_GATEWAY_TOKEN || '',
@@ -153,6 +164,12 @@ async function requestOpenClaw(config, path, payload, timeout) {
     if (error.name === 'AbortError') {
       throw new Error(`OpenClaw request timed out after ${timeout}ms`);
     }
+
+    const causeMessage = error?.cause?.message || '';
+    if (error instanceof TypeError && causeMessage.includes('Expected HTTP/')) {
+      throw new Error('OpenClaw Gateway protocol mismatch. Please set OPENCLAW_BASE_URL to the HTTP dashboard/gateway URL (for example http://127.0.0.1:18789), not the raw WebSocket URL.');
+    }
+
     throw error;
   } finally {
     clearTimeout(timer);
