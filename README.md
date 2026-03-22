@@ -67,27 +67,30 @@ npm install
    - `TASK_TIMEOUT_MS` 用于限制单封邮件任务执行时间
    - `ALLOWED_FROM_DOMAINS` 可选，用逗号分隔多个允许发件域名
 
-3. 配置 OpenClaw Gateway 接口（根据 `openclaw status`，默认本机网关地址是 `http://127.0.0.1:18789`）：
+3. 配置 OpenClaw 接口：
 
-   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`（如果你从 `openclaw status` 里复制的是 `ws://127.0.0.1:18789`，这里要改成 HTTP 形式）
-   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用）
-   - `OPENCLAW_TOOL_ENDPOINT`：默认 `/tools/invoke`（`websearch` 默认直接调用内置 `web_search` 工具）
+   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:7681`
+   - `OPENCLAW_WEBSEARCH_BASE_URL`：可单独覆盖 web_search HTTP API 地址，默认同 `OPENCLAW_BASE_URL`
+   - `OPENCLAW_TOOL_ENDPOINT`：默认 `/api/v1/tool/call`（`websearch` 默认直接调用文档化的 `web_search` HTTP API）
+   - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用；如果你的 OpenClaw 不提供该端点，需要另行调整）
+   - `OPENCLAW_API_TOKEN`：推荐填写 OpenClaw API Token（也兼容 `OPENCLAW_API_KEY` / `OPENCLAW_GATEWAY_TOKEN`）
    - `OPENCLAW_AGENT`：默认 `main`
-   - `OPENCLAW_GATEWAY_TOKEN`：推荐填写 `gateway.auth.token`（也可继续使用 `OPENCLAW_API_KEY`）
    - `OPENCLAW_TIMEOUT_MS`：OpenClaw 请求超时，默认 60000ms
+   - `OPENCLAW_WEBSEARCH_COUNT`：默认 5，范围 1-10
+   - `OPENCLAW_WEBSEARCH_COUNTRY`：默认 `CN`
+   - `OPENCLAW_WEBSEARCH_LANGUAGE`：默认 `zh`
+   - `OPENCLAW_WEBSEARCH_FRESHNESS`：可选，支持 `day/week/month/year`
 
 4. 当前默认策略是：
 
-   - `websearch` → 直接调用 Gateway `POST /tools/invoke` 的 `web_search` 工具
-   - `browser` → 调用 Gateway `POST /v1/chat/completions` 让 agent 自主使用 `browser` / `web_search`
+   - `websearch` → `POST /api/v1/tool/call`，请求体为 `{ tool: "web_search", parameters: { query, count, country, language, freshness } }`
+   - `browser` → `POST /v1/chat/completions`（如果你的 OpenClaw 文档提供了更合适的 browser API，可继续替换）
 
-5. OpenClaw 官方文档说明 `/tools/invoke` 始终启用，而 `/v1/chat/completions` 默认可能是关闭的，需要在网关配置中启用 `gateway.http.endpoints.chatCompletions.enabled=true`。
+5. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
 
-6. `websearch` 依赖 OpenClaw 内置 `web_search` 工具。如果邮件回执里出现 `tool execution failed`，通常说明 OpenClaw 的联网搜索提供商或 API key 尚未配置完成；请先在 OpenClaw 中完成 web search 配置（例如通过设置页或 `openclaw configure --section web`），再重试。
+6. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明你把 `OPENCLAW_BASE_URL` 配成了 `ws://...` WebSocket 地址；请改回 `http://127.0.0.1:7681` 这样的 HTTP API 地址。
 
-7. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明你把 `OPENCLAW_BASE_URL` 配成了 `ws://...` WebSocket 地址；请改回 `http://127.0.0.1:18789` 这样的 HTTP 网关地址。
-
-8. 如果你的 Gateway 配置了不同端点或策略，请按实际配置调整 `src/services/openclawClient.js`。
+7. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
 
 ## 运行
 

@@ -1,5 +1,5 @@
-function normalizeHttpBaseUrl(value) {
-  const raw = (value || 'http://127.0.0.1:18789').trim();
+function normalizeHttpBaseUrl(value, fallback) {
+  const raw = (value || fallback).trim();
   if (raw.startsWith('ws://')) {
     return `http://${raw.slice(5)}`.replace(/\/$/, '');
   }
@@ -10,14 +10,35 @@ function normalizeHttpBaseUrl(value) {
 }
 
 function getConfig() {
+  const baseUrl = normalizeHttpBaseUrl(process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789', 'http://127.0.0.1:18789');
   return {
-    baseUrl: normalizeHttpBaseUrl(process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789'),
-    chatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
-    toolEndpoint: process.env.OPENCLAW_TOOL_ENDPOINT || '/tools/invoke',
-    apiKey: process.env.OPENCLAW_API_KEY || process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    baseUrl,
+    apiKey: process.env.OPENCLAW_API_TOKEN || process.env.OPENCLAW_API_KEY || process.env.OPENCLAW_GATEWAY_TOKEN || '',
     agent: process.env.OPENCLAW_AGENT || 'main',
-    timeoutMs: Number.parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.TASK_TIMEOUT_MS || '60000', 10)
+    timeoutMs: Number.parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.TASK_TIMEOUT_MS || '60000', 10),
+    browserChatEndpoint: process.env.OPENCLAW_CHAT_ENDPOINT || '/v1/chat/completions',
+    toolEndpointPath: process.env.OPENCLAW_TOOL_ENDPOINT || '/api/v1/tool/call',
+    websearchDefaults: {
+      count: Number.parseInt(process.env.OPENCLAW_WEBSEARCH_COUNT || '5', 10),
+      country: process.env.OPENCLAW_WEBSEARCH_COUNTRY || 'CN',
+      language: process.env.OPENCLAW_WEBSEARCH_LANGUAGE || 'zh',
+      freshness: process.env.OPENCLAW_WEBSEARCH_FRESHNESS || ''
+    }
   };
+}
+
+function stripTaskPrefix(input, prefix) {
+  const value = (input || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  const patterns = [
+    new RegExp(`^${prefix}[:：\\s-]+`, 'i'),
+    new RegExp(`^${prefix}$`, 'i')
+  ];
+
+  return patterns.reduce((current, pattern) => current.replace(pattern, '').trim(), value);
 }
 
 function buildPrompt(task) {
@@ -77,17 +98,23 @@ function extractText(data) {
   }
 
   if (Array.isArray(choiceContent)) {
-    return choiceContent
-      .map((part) => (typeof part === 'string' ? part : (part?.text || JSON.stringify(part))))
-      .join('\n');
+    return choiceContent.map((part) => (typeof part === 'string' ? part : (part?.text || JSON.stringify(part)))).join('\n');
+  }
+
+  if (Array.isArray(data.results)) {
+    return data.results
+      .map((item, index) => `${index + 1}. ${item.title || ''}\n${item.url || ''}\n${item.snippet || ''}`.trim())
+      .join('\n\n');
+  }
+
+  if (data.result && Array.isArray(data.result.results)) {
+    return data.result.results
+      .map((item, index) => `${index + 1}. ${item.title || ''}\n${item.url || ''}\n${item.snippet || ''}`.trim())
+      .join('\n\n');
   }
 
   if (typeof data.result === 'string') {
     return data.result;
-  }
-
-  if (Array.isArray(data.result)) {
-    return data.result.map((item) => JSON.stringify(item, null, 2)).join('\n');
   }
 
   if (typeof data.answer === 'string') {
@@ -109,27 +136,34 @@ function extractText(data) {
   return JSON.stringify(data, null, 2);
 }
 
-function buildChatCompletionPayload(task) {
+function buildChatCompletionPayload(task, config) {
   return {
-    model: `openclaw:${task.agent || 'main'}`,
+    model: `openclaw:${config.agent}`,
     user: Array.isArray(task.from) && task.from[0]?.address ? task.from[0].address : undefined,
-    messages: [
-      {
-        role: 'user',
-        content: buildPrompt(task)
-      }
-    ]
+    messages: [{ role: 'user', content: buildPrompt(task) }]
   };
 }
 
-function buildToolInvokePayload(task, config) {
+function buildToolCallPayload(task, config) {
+  const query = stripTaskPrefix(task.subject || task.body || '', 'web') || task.subject || task.body || '';
+  const parameters = {
+    query,
+    count: Math.min(Math.max(config.websearchDefaults.count || 5, 1), 10)
+  };
+
+  if (config.websearchDefaults.country) {
+    parameters.country = config.websearchDefaults.country;
+  }
+  if (config.websearchDefaults.language) {
+    parameters.language = config.websearchDefaults.language;
+  }
+  if (config.websearchDefaults.freshness) {
+    parameters.freshness = config.websearchDefaults.freshness;
+  }
+
   return {
     tool: 'web_search',
-    action: 'json',
-    sessionKey: config.agent,
-    args: {
-      query: task.subject || task.body || ''
-    }
+    parameters
   };
 }
 
@@ -138,7 +172,6 @@ async function parseJsonResponse(response) {
   if (!text) {
     return {};
   }
-
   try {
     return JSON.parse(text);
   } catch {
@@ -146,12 +179,12 @@ async function parseJsonResponse(response) {
   }
 }
 
-async function requestOpenClaw(config, path, payload, timeout) {
+async function requestOpenClaw(config, url, payload, timeout) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const response = await fetch(`${config.baseUrl}${path}`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: buildHeaders(config),
       body: JSON.stringify(payload),
@@ -167,7 +200,7 @@ async function requestOpenClaw(config, path, payload, timeout) {
 
     const causeMessage = error?.cause?.message || '';
     if (error instanceof TypeError && causeMessage.includes('Expected HTTP/')) {
-      throw new Error('OpenClaw Gateway protocol mismatch. Please set OPENCLAW_BASE_URL to the HTTP dashboard/gateway URL (for example http://127.0.0.1:18789), not the raw WebSocket URL.');
+      throw new Error('OpenClaw Gateway protocol mismatch. Please set OPENCLAW_BASE_URL to the HTTP API base URL (for example http://127.0.0.1:7681), not a raw WebSocket URL.');
     }
 
     throw error;
@@ -182,18 +215,15 @@ function buildHttpError(response, data, fallbackMessage) {
 }
 
 async function executeWebsearch(task, config, timeout) {
-  const { response, data } = await requestOpenClaw(config, config.toolEndpoint, buildToolInvokePayload(task, config), timeout);
+  const url = `${normalizeHttpBaseUrl(process.env.OPENCLAW_WEBSEARCH_BASE_URL || config.baseUrl, config.baseUrl)}${config.toolEndpointPath}`;
+  const { response, data } = await requestOpenClaw(config, url, buildToolCallPayload(task, config), timeout);
 
   if (!response.ok) {
-    const error = buildHttpError(response, data, 'OpenClaw tools/invoke error');
-    if (response.status >= 500 && String(error.message).includes('tool execution failed')) {
-      throw new Error('OpenClaw web_search tool execution failed. Please verify the Gateway web search provider/API key is configured correctly (for example via OpenClaw web search settings or `openclaw configure --section web`).');
-    }
-    throw error;
+    throw buildHttpError(response, data, 'OpenClaw tool/call error');
   }
 
-  if (data && data.ok === false) {
-    throw new Error(`OpenClaw web_search failed: ${data.error?.message || JSON.stringify(data.error || data)}`);
+  if (data && data.status && data.status !== 'ok') {
+    throw new Error(`OpenClaw web_search failed: ${JSON.stringify(data)}`);
   }
 
   return {
@@ -206,17 +236,17 @@ async function executeWebsearch(task, config, timeout) {
 }
 
 async function executeBrowser(task, config, timeout) {
-  const { response, data } = await requestOpenClaw(config, config.chatEndpoint, buildChatCompletionPayload({ ...task, agent: config.agent }), timeout);
+  const url = `${config.baseUrl}${config.browserChatEndpoint}`;
+  const { response, data } = await requestOpenClaw(config, url, buildChatCompletionPayload(task, config), timeout);
 
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error('OpenClaw chat completions endpoint is not enabled. Enable gateway.http.endpoints.chatCompletions.enabled=true or configure OPENCLAW_CHAT_ENDPOINT to a working endpoint.');
+      throw new Error('OpenClaw chat completions endpoint is not enabled. Enable the HTTP chat endpoint or configure OPENCLAW_CHAT_ENDPOINT to a working browser-compatible endpoint.');
     }
     throw buildHttpError(response, data, 'OpenClaw Gateway API error');
   }
 
   const text = extractText(data);
-
   return {
     ok: true,
     message: text || 'OpenClaw browser task executed successfully.',
@@ -233,7 +263,6 @@ async function executeTask(task) {
   if (task.type === 'websearch') {
     return executeWebsearch(task, config, timeout);
   }
-
   if (task.type === 'browser') {
     return executeBrowser(task, config, timeout);
   }
@@ -246,5 +275,7 @@ module.exports = {
   buildPrompt,
   extractText,
   buildChatCompletionPayload,
-  buildToolInvokePayload
+  buildToolCallPayload,
+  normalizeHttpBaseUrl,
+  stripTaskPrefix
 };
