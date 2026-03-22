@@ -69,7 +69,7 @@ npm install
 
 3. 配置 OpenClaw 接口：
 
-   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:7681`
+   - `OPENCLAW_BASE_URL`：默认 `http://127.0.0.1:18789`
    - `OPENCLAW_WEBSEARCH_BASE_URL`：可单独覆盖 web_search HTTP API 地址，默认同 `OPENCLAW_BASE_URL`
    - `OPENCLAW_TOOL_ENDPOINT`：默认 `/api/v1/tool/call`（`websearch` 默认直接调用文档化的 `web_search` HTTP API）
    - `OPENCLAW_CHAT_ENDPOINT`：默认 `/v1/chat/completions`（主要给 `browser` 任务使用；如果你的 OpenClaw 不提供该端点，需要另行调整）
@@ -88,7 +88,7 @@ npm install
 
 5. 如果你从邮件主题里使用类似 `web 伊朗最新新闻` 的格式，程序会自动去掉前缀 `web` 后再作为 `query` 发送给 OpenClaw。
 
-6. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明你把 `OPENCLAW_BASE_URL` 配成了 `ws://...` WebSocket 地址；请改回 `http://127.0.0.1:7681` 这样的 HTTP API 地址。
+6. 如果出现 `Response does not match the HTTP/1.1 protocol (Expected HTTP/)`，通常说明你把 `OPENCLAW_BASE_URL` 配成了 `ws://...` WebSocket 地址；请改回 `http://127.0.0.1:18789` 这样的 HTTP API 地址。
 
 7. 如果你的 OpenClaw 实际开放的端口、端点或鉴权方式与文档不同，请按实际部署情况调整 `src/services/openclawClient.js`。
 
