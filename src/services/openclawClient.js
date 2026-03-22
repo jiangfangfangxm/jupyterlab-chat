@@ -29,6 +29,7 @@ function getConfig() {
       browserCommand: process.env.OPENCLAW_BROWSER_CLI_COMMAND || ''
     },
     websearchDefaults: {
+      mode: (process.env.OPENCLAW_WEBSEARCH_MODE || 'agent').trim().toLowerCase(),
       extractMode: process.env.OPENCLAW_WEBFETCH_EXTRACT_MODE || 'markdown',
       maxChars: Number.parseInt(process.env.OPENCLAW_WEBFETCH_MAX_CHARS || '12000', 10)
     }
@@ -51,6 +52,26 @@ function stripTaskPrefix(input, prefix) {
 
 function buildPrompt(task) {
   if (task.type === 'websearch') {
+    const mode = (process.env.OPENCLAW_WEBSEARCH_MODE || 'agent').trim().toLowerCase();
+    if (mode === 'agent') {
+      return [
+        '你是 OpenClaw 网关里的信息处理助手。',
+        '',
+        '请根据用户邮件主题和正文，自行判断应该调用哪些内置工具来完成任务。',
+        '如果需要访问已知链接，可使用 web_fetch；如果需要更复杂的页面交互，可使用 browser。',
+        '不要仅凭记忆回答；如果信息不足，请明确说明。',
+        '',
+        `邮件主题：${task.subject || ''}`,
+        task.body ? `邮件正文：${task.body}` : '',
+        '',
+        '请输出：',
+        '1. 任务结论',
+        '2. 关键依据',
+        '3. 如有工具调用，请给出关键来源或访问链接',
+        '4. 如任务无法完成，说明原因'
+      ].filter(Boolean).join('\n');
+    }
+
     const url = extractUrlFromTask(task);
     return [
       '你是 OpenClaw 网关里的网页抓取助手。',
@@ -82,6 +103,14 @@ function buildPrompt(task) {
   }
 
   return task.subject || task.body || '';
+}
+
+function executeAgentTaskPayload(task, config) {
+  return {
+    agent: config.agent,
+    task,
+    prompt: buildPrompt(task)
+  };
 }
 
 function buildHeaders(config) {
@@ -396,6 +425,46 @@ function buildHttpError(response, data, fallbackMessage) {
 }
 
 async function executeWebsearch(task, config, timeout) {
+  if (config.websearchDefaults.mode === 'agent') {
+    if (config.executionMode === 'cli') {
+      const command = config.cli.browserCommand || config.cli.websearchCommand;
+      const cliResult = await executeCliCommand(
+        command,
+        executeAgentTaskPayload(task, config),
+        timeout,
+        config.cli.shell
+      );
+      const cliText = extractText(cliResult.data) || cliResult.rawStdout;
+
+      return {
+        ok: true,
+        message: cliText || 'OpenClaw agent-driven websearch executed successfully via CLI.',
+        text: cliText,
+        result: cliResult.data,
+        task
+      };
+    }
+
+    const url = `${config.baseUrl}${config.browserChatEndpoint}`;
+    const { response, data } = await requestOpenClaw(config, url, buildChatCompletionPayload(task, config), timeout);
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('OpenClaw chat completions endpoint is not enabled. For agent mode websearch, please enable the HTTP chat endpoint or switch OPENCLAW_WEBSEARCH_MODE=web_fetch.');
+      }
+      throw buildHttpError(response, data, 'OpenClaw agent websearch error');
+    }
+
+    const text = extractText(data);
+    return {
+      ok: true,
+      message: text || 'OpenClaw agent-driven websearch executed successfully.',
+      text,
+      result: data,
+      task
+    };
+  }
+
   if (config.executionMode === 'cli') {
     const cliResult = shouldUseBuiltinWebsearchCli(config.cli.websearchCommand)
       ? await executeBuiltinWebsearchCli(task, config, timeout)
@@ -479,14 +548,9 @@ async function executeWebsearch(task, config, timeout) {
 
 async function executeBrowser(task, config, timeout) {
   if (config.executionMode === 'cli') {
-    const payload = {
-      agent: config.agent,
-      task,
-      prompt: buildPrompt(task)
-    };
     const cliResult = await executeCliCommand(
       config.cli.browserCommand,
-      payload,
+      executeAgentTaskPayload(task, config),
       timeout,
       config.cli.shell
     );
